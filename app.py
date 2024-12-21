@@ -45,7 +45,7 @@ cycle_trigger_source = None
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(DEFAULT_CONFIG['relay_pin'], GPIO.OUT)
-GPIO.output(DEFAULT_CONFIG['relay_pin'], GPIO.LOW)  # Start with relay OFF
+GPIO.output(DEFAULT_CONFIG['relay_pin'], GPIO.LOW)  # Start with relay  OFF
 
 def c_to_f(celsius):
     return (celsius * 9/5) + 32

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+   <title>Boiler Control</title>
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+   <style>
+       body {
+           font-family: Arial, sans-serif;
+           max-width: 800px;
+           margin: 0 auto;
+           padding: 20px;
+           background-color: #f0f0f0;
+       }
+       .card {
+           background: white;
+           padding: 20px;
+           border-radius: 8px;
+           box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+           margin-bottom: 20px;
+       }
+       .info {
+           font-size: 18px;
+           margin-bottom: 10px;
+       }
+       .cycle-running {
+           color: #4CAF50;
+           font-weight: bold;
+       }
+       .cycle-off {
+           color: #666;
+       }
+       input[type="number"] {
+           padding: 8px;
+           border: 1px solid #ddd;
+           border-radius: 4px;
+           width: 80px;
+           margin-right: 10px;
+       }
+       .button {
+           background-color: #4CAF50;
+           color: white;
+           padding: 8px 16px;
+           border: none;
+           border-radius: 4px;
+           cursor: pointer;
+           margin-right: 10px;
+       }
+       .button:disabled {
+           background-color: #cccccc;
+           cursor: not-allowed;
+       }
+       .button.stop {
+           background-color: #f44336;
+       }
+       .setting-row {
+           display: flex;
+           align-items: center;
+           margin-bottom: 15px;
+       }
+       .setting-label {
+           width: 180px;
+           margin-right: 10px;
+       }
+   </style>
+</head>
+<body>
+   <div class="card">
+       <h2>Temperature Status</h2>
+       <div id="temperatureInfo" class="info">Loading temperature...</div>
+       <div id="cycleStatus" class="info">Checking cycle status...</div>
+   </div>
+
+   <div class="card">
+       <h2>Manual Control</h2>
+       <div class="setting-row">
+           <button id="manualButton" onclick="toggleManualControl()" class="button">Start Heating Cycle</button>
+       </div>
+   </div>
+
+   <div class="card">
+       <h2>Control Settings</h2>
+       <div class="setting-row">
+           <label class="setting-label">Temperature Threshold:</label>
+           <input type="number" id="tempThreshold" min="50" max="90" step="0.5">
+           <label style="margin-right: 20px;">°F</label>
+           <button onclick="updateTempThreshold()" class="button">Save</button>
+       </div>
+       <div class="setting-row">
+           <label class="setting-label">Heating Cycle Duration:</label>
+           <input type="number" id="cycleDuration" min="1" max="120" step="1">
+           <label style="margin-right: 20px;">minutes</label>
+           <button onclick="updateCycleDuration()" class="button">Save</button>
+       </div>
+   </div>
+
+   <script>
+       let currentDuration = 30;  // Will be updated from server
+       let cycleRunning = false;
+
+       async function updateStatus() {
+           try {
+               const response = await fetch('/status');
+               const data = await response.json();
+               
+               const tempInfo = document.getElementById('temperatureInfo');
+               const cycleStatus = document.getElementById('cycleStatus');
+               const manualButton = document.getElementById('manualButton');
+               
+               if (data.current_temperature !== null) {
+                   tempInfo.textContent = `Current Temperature: ${data.current_temperature.toFixed(1)}°F
+                       (Threshold: ${data.threshold}°F)`;
+               } else {
+                   tempInfo.textContent = 'Waiting for temperature data...';
+               }
+
+               cycleStatus.textContent = data.cycle_running ? 
+                   `Heating Cycle: RUNNING (${data.cycle_duration_minutes} minute cycle)` :
+                   `Heating Cycle: OFF (${data.cycle_duration_minutes} minute cycle)`;
+               cycleStatus.className = data.cycle_running ? 'info cycle-running' : 'info cycle-off';
+
+               // Update manual control button
+               cycleRunning = data.cycle_running;
+               manualButton.textContent = cycleRunning ? 'Stop Heating Cycle' : 'Start Heating Cycle';
+               manualButton.className = cycleRunning ? 'button stop' : 'button';
+
+               // Update inputs if they changed
+               if (data.cycle_duration_minutes !== currentDuration) {
+                   currentDuration = data.cycle_duration_minutes;
+                   document.getElementById('cycleDuration').value = currentDuration;
+               }
+               document.getElementById('tempThreshold').value = data.threshold;
+           } catch (error) {
+               console.error('Error updating status:', error);
+           }
+       }
+
+       async function toggleManualControl() {
+           try {
+               const response = await fetch('/manual', {
+                   method: 'POST',
+                   headers: {'Content-Type': 'application/json'},
+                   body: JSON.stringify({
+                       action: cycleRunning ? 'stop' : 'start'
+                   })
+               });
+               
+               if (response.ok) {
+                   updateStatus();  // Refresh display
+               }
+           } catch (error) {
+               console.error('Error with manual control:', error);
+               alert('Failed to control heating cycle');
+           }
+       }
+
+       async function updateCycleDuration() {
+           const duration = parseInt(document.getElementById('cycleDuration').value);
+           if (isNaN(duration) || duration < 1 || duration > 120) {
+               alert('Please enter a duration between 1 and 120 minutes');
+               return;
+           }
+
+           try {
+               const response = await fetch('/config', {
+                   method: 'POST',
+                   headers: {'Content-Type': 'application/json'},
+                   body: JSON.stringify({cycle_duration_minutes: duration})
+               });
+               
+               if (response.ok) {
+                   currentDuration = duration;
+                   updateStatus();  // Refresh display
+               }
+           } catch (error) {
+               console.error('Error updating cycle duration:', error);
+               alert('Failed to update cycle duration');
+           }
+       }
+
+       async function updateTempThreshold() {
+           const threshold = parseFloat(document.getElementById('tempThreshold').value);
+           if (isNaN(threshold) || threshold < 50 || threshold > 90) {
+               alert('Please enter a temperature between 50°F and 90°F');
+               return;
+           }
+
+           try {
+               const response = await fetch('/config', {
+                   method: 'POST',
+                   headers: {'Content-Type': 'application/json'},
+                   body: JSON.stringify({temp_threshold_f: threshold})
+               });
+               
+               if (response.ok) {
+                   updateStatus();  // Refresh display
+               }
+           } catch (error) {
+               console.error('Error updating temperature threshold:', error);
+               alert('Failed to update temperature threshold');
+           }
+       }
+
+       // Initialize cycle duration input
+       document.getElementById('cycleDuration').value = currentDuration;
+
+       // Update status every 10 seconds
+       setInterval(updateStatus, 10000);
+       updateStatus();  // Initial update
+   </script>
+</body>
+</html>

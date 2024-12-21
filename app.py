@@ -12,27 +12,40 @@ import fcntl
 
 app = Flask(__name__)
 
-# Constants
-RELAY_PIN = 17  # GPIO pin connected to relay
-SCHEDULE_FILE = 'schedule.json'
+# Default configurations - these can be overridden by config.json
+DEFAULT_CONFIG = {
+    "relay_pin": 17,
+    "mqtt_broker": "localhost",
+    "mqtt_port": 1883,
+    "sensors": {
+        "sensor1": {
+            "name": "Room 1",
+            "mqtt_topic": "sensors/room1/temperature",
+            "threshold": 66.0
+        },
+        "sensor2": {
+            "name": "Room 2",
+            "mqtt_topic": "sensors/room2/temperature",
+            "threshold": 66.0
+        }
+    },
+    "cycle_duration_minutes": 30
+}
+
 CONFIG_FILE = 'config.json'
-MQTT_BROKER = "localhost"
-MQTT_PORT = 1883
-MQTT_TOPIC = "nanit/babies/56728ce1/temperature"
-TEMP_THRESHOLD_F = 66.0  # Temperature threshold in Fahrenheit
-DEFAULT_CYCLE_MINUTES = 30  # Default heating cycle duration
 LOCK_FILE = '/tmp/boiler_control.lock'
 
 # Global variables
+config = DEFAULT_CONFIG.copy()
 heating_cycle_thread = None
-last_temp = None
-cycle_duration_minutes = DEFAULT_CYCLE_MINUTES
+last_temps = {sensor_id: None for sensor_id in DEFAULT_CONFIG['sensors'].keys()}
+cycle_trigger_source = None
 
 # Initialize GPIO
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(RELAY_PIN, GPIO.OUT)
-GPIO.output(RELAY_PIN, GPIO.LOW)  # Start with relay OFF (LOW)
+GPIO.setup(DEFAULT_CONFIG['relay_pin'], GPIO.OUT)
+GPIO.output(DEFAULT_CONFIG['relay_pin'], GPIO.LOW)  # Start with relay OFF
 
 def c_to_f(celsius):
     return (celsius * 9/5) + 32
@@ -41,85 +54,97 @@ def f_to_c(fahrenheit):
     return (fahrenheit - 32) * 5/9
 
 def load_config():
-    global cycle_duration_minutes, TEMP_THRESHOLD_F
+    """Load configuration from file, falling back to defaults if needed"""
+    global config
     try:
         with open(CONFIG_FILE, 'r') as f:
-            config = json.load(f)
-            cycle_duration_minutes = config.get('cycle_duration_minutes', DEFAULT_CYCLE_MINUTES)
-            TEMP_THRESHOLD_F = config.get('temp_threshold_f', 66.0)
+            loaded_config = json.load(f)
+            # Deep merge with defaults
+            config = DEFAULT_CONFIG.copy()
+            config.update(loaded_config)
     except FileNotFoundError:
         save_config()
 
 def save_config():
+    """Save current configuration to file"""
     with open(CONFIG_FILE, 'w') as f:
-        json.dump({
-            'cycle_duration_minutes': cycle_duration_minutes,
-            'temp_threshold_f': TEMP_THRESHOLD_F
-        }, f)
+        json.dump(config, f, indent=4)
 
-def heating_cycle():
+def heating_cycle(trigger_source="manual"):
     """Run one heating cycle"""
+    global cycle_trigger_source
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] ====== STARTING HEATING CYCLE ======")
-    print(f"[{timestamp}] Duration: {cycle_duration_minutes} minutes")
-    print(f"[{timestamp}] Temperature threshold: {TEMP_THRESHOLD_F}°F")
+    print(f"[{timestamp}] Duration: {config['cycle_duration_minutes']} minutes")
+    print(f"[{timestamp}] Triggered by: {trigger_source}")
     
-    GPIO.output(RELAY_PIN, GPIO.HIGH)  # Turn ON
+    cycle_trigger_source = trigger_source
+    GPIO.output(config['relay_pin'], GPIO.HIGH)  # Turn ON
     
-    time.sleep(cycle_duration_minutes * 60)  # Convert minutes to seconds
+    time.sleep(config['cycle_duration_minutes'] * 60)
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    GPIO.output(RELAY_PIN, GPIO.LOW)  # Turn OFF
+    GPIO.output(config['relay_pin'], GPIO.LOW)  # Turn OFF
+    cycle_trigger_source = None
     print(f"[{timestamp}] ====== HEATING CYCLE COMPLETED ======")
 
-def check_temperature(temperature_c):
-    """Start a heating cycle if temperature is below threshold and no cycle is running"""
+def start_heating_cycle(trigger_source):
+    """Start a heating cycle if none is running"""
     global heating_cycle_thread
     
-    temperature_f = c_to_f(temperature_c)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] Temperature check: {temperature_f:.1f}°F (threshold: {TEMP_THRESHOLD_F}°F)")
-    
-    # If temperature is below threshold and no heating cycle is running
-    if temperature_f < TEMP_THRESHOLD_F:
-        if heating_cycle_thread is None or not heating_cycle_thread.is_alive():
-            print(f"[{timestamp}] Temperature {temperature_f:.1f}°F is below threshold {TEMP_THRESHOLD_F}°F - starting new heating cycle")
-            heating_cycle_thread = threading.Thread(target=heating_cycle)
-            heating_cycle_thread.daemon = True
-            heating_cycle_thread.start()
-        else:
-            print(f"[{timestamp}] Temperature {temperature_f:.1f}°F is below threshold but heating cycle is already running")
-    else:
-        print(f"[{timestamp}] Temperature {temperature_f:.1f}°F is above threshold - no action needed")
+    if heating_cycle_thread is None or not heating_cycle_thread.is_alive():
+        heating_cycle_thread = threading.Thread(target=heating_cycle, args=(trigger_source,))
+        heating_cycle_thread.daemon = True
+        heating_cycle_thread.start()
+        return True
+    return False
 
 def stop_heating_cycle():
     """Stop the current heating cycle if one is running"""
     global heating_cycle_thread, cycle_trigger_source
     if heating_cycle_thread and heating_cycle_thread.is_alive():
-        GPIO.output(RELAY_PIN, GPIO.LOW)  # Turn OFF
-        heating_cycle_thread = None  # Clear the thread
-        cycle_trigger_source = None  # Clear the trigger source
+        GPIO.output(config['relay_pin'], GPIO.LOW)  # Turn OFF
+        heating_cycle_thread = None
+        cycle_trigger_source = None
         print("Manually stopped heating cycle")
     return True
+
+def check_temperature(sensor_id, temperature_c):
+    temperature_f = c_to_f(temperature_c)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sensor_config = config['sensors'][sensor_id]
+    print(f"[{timestamp}] {sensor_config['name']}: {temperature_f:.1f}°F (threshold: {sensor_config['threshold']}°F)")
+    
+    if temperature_f < sensor_config['threshold']:
+        if start_heating_cycle(f"Sensor {sensor_config['name']}"):
+            print(f"[{timestamp}] Started heating cycle - {sensor_config['name']} below threshold")
+        else:
+            print(f"[{timestamp}] Heating cycle already running")
+    else:
+        print(f"[{timestamp}] Temperature above threshold - no action needed")
 
 # MQTT callbacks
 def on_connect(client, userdata, flags, rc):
     print(f"MQTT Connection result: {rc}")
     if rc == 0:
-        print(f"Successfully subscribed to {MQTT_TOPIC}")
-        client.subscribe(MQTT_TOPIC)
-    else:
-        print(f"Failed to connect to MQTT broker with code {rc}")
+        for sensor_id, sensor_config in config['sensors'].items():
+            topic = sensor_config['mqtt_topic']
+            print(f"Subscribing to {topic}")
+            client.subscribe(topic)
 
 def on_message(client, userdata, msg):
-    global last_temp
-    print(f"MQTT message received: {msg.payload}")
+    global last_temps
     try:
         temperature_c = float(msg.payload.decode())
-        temperature_f = c_to_f(temperature_c)
-        last_temp = temperature_c
-        print(f"Processed temperature: {temperature_f:.1f}°F")
-        check_temperature(temperature_c)
+        # Find sensor ID by matching topic
+        sensor_id = next(
+            (sid for sid, cfg in config['sensors'].items() 
+             if cfg['mqtt_topic'] == msg.topic),
+            None
+        )
+        if sensor_id:
+            last_temps[sensor_id] = temperature_c
+            check_temperature(sensor_id, temperature_c)
     except ValueError as e:
         print(f"Error processing temperature: {e}")
 
@@ -131,20 +156,28 @@ def home():
 def get_status():
     cycle_running = heating_cycle_thread is not None and heating_cycle_thread.is_alive()
     return jsonify({
-        'current_temperature': c_to_f(last_temp) if last_temp is not None else None,
-        'threshold': TEMP_THRESHOLD_F,
+        'temperatures': {
+            sensor_id: {
+                'name': sensor_config['name'],
+                'temperature': c_to_f(last_temps[sensor_id]) if last_temps[sensor_id] is not None else None,
+                'threshold': sensor_config['threshold']
+            }
+            for sensor_id, sensor_config in config['sensors'].items()
+        },
         'cycle_running': cycle_running,
-        'cycle_duration_minutes': cycle_duration_minutes
+        'cycle_duration_minutes': config['cycle_duration_minutes'],
+        'cycle_trigger_source': cycle_trigger_source
     })
 
 @app.route('/config', methods=['POST'])
 def update_config():
-    global cycle_duration_minutes, TEMP_THRESHOLD_F
     data = request.json
     if 'cycle_duration_minutes' in data:
-        cycle_duration_minutes = int(data['cycle_duration_minutes'])
-    if 'temp_threshold_f' in data:
-        TEMP_THRESHOLD_F = float(data['temp_threshold_f'])
+        config['cycle_duration_minutes'] = int(data['cycle_duration_minutes'])
+    if 'thresholds' in data:
+        for sensor_id, threshold in data['thresholds'].items():
+            if sensor_id in config['sensors']:
+                config['sensors'][sensor_id]['threshold'] = float(threshold)
     save_config()
     return jsonify({'success': True})
 
@@ -152,20 +185,15 @@ def update_config():
 def manual_control():
     action = request.json.get('action')
     if action == 'start':
-        global heating_cycle_thread
-        if not heating_cycle_thread or not heating_cycle_thread.is_alive():
-            heating_cycle_thread = threading.Thread(target=heating_cycle)
-            heating_cycle_thread.daemon = True
-            heating_cycle_thread.start()
-            print("Manually started heating cycle")
-        return jsonify({'success': True})
+        if start_heating_cycle("manual"):
+            return jsonify({'success': True})
+        return jsonify({'success': False, 'error': 'Cycle already running'})
     elif action == 'stop':
         success = stop_heating_cycle()
         return jsonify({'success': success})
     return jsonify({'success': False, 'error': 'Invalid action'})
 
 if __name__ == '__main__':
-    # Try to get lock file
     fp = open(LOCK_FILE, 'w')
     try:
         fcntl.lockf(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -173,16 +201,14 @@ if __name__ == '__main__':
         print("Another instance is running")
         sys.exit(1)
 
-    # Load configuration
     load_config()
     
-    # Initialize MQTT client
     mqtt_client = mqtt.Client()
     mqtt_client.on_connect = on_connect
     mqtt_client.on_message = on_message
 
     try:
-        mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        mqtt_client.connect(config['mqtt_broker'], config['mqtt_port'], 60)
         mqtt_client.loop_start()
     except Exception as e:
         print(f"Failed to connect to MQTT broker: {e}")

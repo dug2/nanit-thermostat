@@ -1,0 +1,18 @@
+{
+    "relay_pin": 17,
+    "mqtt_broker": "localhost",
+    "mqtt_port": 1883,
+    "sensors": {
+        "sensor1": {
+            "name": "Room 1",
+            "mqtt_topic": "sensors/room1/temperature",
+            "threshold": 66.0
+        },
+        "sensor2": {
+            "name": "Room 2",
+            "mqtt_topic": "sensors/room2/temperature",
+            "threshold": 66.0
+        }
+    },
+    "cycle_duration_minutes": 30
+}

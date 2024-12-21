@@ -5,132 +5,198 @@
    <meta name="viewport" content="width=device-width, initial-scale=1">
    <style>
        body {
-           font-family: Arial, sans-serif;
-           max-width: 800px;
-           margin: 0 auto;
-           padding: 20px;
+           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+           margin: 0;
+           padding: 10px;
            background-color: #f0f0f0;
        }
        .card {
            background: white;
-           padding: 20px;
-           border-radius: 8px;
+           padding: 15px;
+           border-radius: 12px;
            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-           margin-bottom: 20px;
+           margin-bottom: 15px;
+           width: 100%;
+           max-width: 600px;
+           margin-left: auto;
+           margin-right: auto;
+           box-sizing: border-box;
        }
        .info {
-           font-size: 18px;
-           margin-bottom: 10px;
+           font-size: 16px;
+           margin-bottom: 8px;
+           word-break: break-word;
+       }
+       h2 {
+           font-size: 20px;
+           margin-top: 0;
+           margin-bottom: 15px;
        }
        .cycle-running {
            color: #4CAF50;
-           font-weight: bold;
+           font-weight: 600;
        }
        .cycle-off {
            color: #666;
        }
        input[type="number"] {
+           font-size: 16px;
            padding: 8px;
            border: 1px solid #ddd;
-           border-radius: 4px;
-           width: 80px;
-           margin-right: 10px;
+           border-radius: 8px;
+           width: 70px;
+           -webkit-appearance: none;
+           margin: 5px 8px 5px 0;
        }
        .button {
            background-color: #4CAF50;
            color: white;
-           padding: 8px 16px;
+           padding: 12px 20px;
            border: none;
-           border-radius: 4px;
+           border-radius: 8px;
            cursor: pointer;
-           margin-right: 10px;
+           font-size: 16px;
+           font-weight: 500;
+           width: 100%;
+           margin: 5px 0;
+           -webkit-tap-highlight-color: transparent;
+       }
+       .button:active {
+           opacity: 0.8;
        }
        .button:disabled {
            background-color: #cccccc;
-           cursor: not-allowed;
        }
        .button.stop {
            background-color: #f44336;
        }
        .setting-row {
            display: flex;
-           align-items: center;
+           flex-direction: column;
            margin-bottom: 15px;
        }
        .setting-label {
-           width: 180px;
-           margin-right: 10px;
+           font-weight: 500;
+           margin-bottom: 5px;
+       }
+       .setting-input {
+           display: flex;
+           align-items: center;
+           flex-wrap: wrap;
+       }
+       .sensor-name {
+           font-weight: 600;
+           color: #2196F3;
+       }
+       @media (min-width: 600px) {
+           .setting-row {
+               flex-direction: row;
+               align-items: center;
+           }
+           .setting-label {
+               width: 180px;
+               margin-bottom: 0;
+           }
+           .button {
+               width: auto;
+           }
        }
    </style>
 </head>
 <body>
    <div class="card">
        <h2>Temperature Status</h2>
-       <div id="temperatureInfo" class="info">Loading temperature...</div>
+       <div id="sensorStatus" class="info">Loading temperatures...</div>
        <div id="cycleStatus" class="info">Checking cycle status...</div>
    </div>
 
    <div class="card">
        <h2>Manual Control</h2>
-       <div class="setting-row">
-           <button id="manualButton" onclick="toggleManualControl()" class="button">Start Heating Cycle</button>
-       </div>
+       <button id="manualButton" onclick="toggleManualControl()" class="button">Start Heating Cycle</button>
    </div>
 
    <div class="card">
        <h2>Control Settings</h2>
-       <div class="setting-row">
-           <label class="setting-label">Temperature Threshold:</label>
-           <input type="number" id="tempThreshold" min="50" max="90" step="0.5">
-           <label style="margin-right: 20px;">°F</label>
-           <button onclick="updateTempThreshold()" class="button">Save</button>
+       <div id="thresholdControls">
+           <!-- Will be populated dynamically -->
        </div>
        <div class="setting-row">
-           <label class="setting-label">Heating Cycle Duration:</label>
-           <input type="number" id="cycleDuration" min="1" max="120" step="1">
-           <label style="margin-right: 20px;">minutes</label>
-           <button onclick="updateCycleDuration()" class="button">Save</button>
+           <div class="setting-label">Cycle Duration</div>
+           <div class="setting-input">
+               <input type="number" id="cycleDuration" min="1" max="120" step="1">
+               <label style="margin-right: 10px;">min</label>
+               <button onclick="updateCycleDuration()" class="button">Save</button>
+           </div>
        </div>
    </div>
 
    <script>
-       let currentDuration = 30;  // Will be updated from server
+       let currentDuration = 30;
        let cycleRunning = false;
+       let sensors = {};
 
        async function updateStatus() {
            try {
                const response = await fetch('/status');
                const data = await response.json();
                
-               const tempInfo = document.getElementById('temperatureInfo');
-               const cycleStatus = document.getElementById('cycleStatus');
-               const manualButton = document.getElementById('manualButton');
-               
-               if (data.current_temperature !== null) {
-                   tempInfo.textContent = `Current Temperature: ${data.current_temperature.toFixed(1)}°F
-                       (Threshold: ${data.threshold}°F)`;
-               } else {
-                   tempInfo.textContent = 'Waiting for temperature data...';
+               // Update sensor readings
+               const sensorStatus = document.getElementById('sensorStatus');
+               let statusHtml = '';
+               for (const [sensorId, sensorData] of Object.entries(data.temperatures)) {
+                   if (sensorData.temperature !== null) {
+                       statusHtml += `<div><span class="sensor-name">${sensorData.name}:</span> `;
+                       statusHtml += `${sensorData.temperature.toFixed(1)}°F `;
+                       statusHtml += `(Threshold: ${sensorData.threshold}°F)</div>`;
+                   }
                }
+               sensorStatus.innerHTML = statusHtml || 'Waiting for temperature data...';
 
+               // Update cycle status
+               const cycleStatus = document.getElementById('cycleStatus');
                cycleStatus.textContent = data.cycle_running ? 
-                   `Heating Cycle: RUNNING (${data.cycle_duration_minutes} minute cycle)` :
-                   `Heating Cycle: OFF (${data.cycle_duration_minutes} minute cycle)`;
+                   `Heating Cycle: RUNNING (${data.cycle_duration_minutes} minute cycle${data.cycle_trigger_source ? ` - Triggered by ${data.cycle_trigger_source}` : ''})` :
+                   `Heating Cycle: OFF`;
                cycleStatus.className = data.cycle_running ? 'info cycle-running' : 'info cycle-off';
 
                // Update manual control button
                cycleRunning = data.cycle_running;
+               const manualButton = document.getElementById('manualButton');
                manualButton.textContent = cycleRunning ? 'Stop Heating Cycle' : 'Start Heating Cycle';
                manualButton.className = cycleRunning ? 'button stop' : 'button';
 
-               // Update inputs if they changed
+               // Update threshold controls
+               if (JSON.stringify(data.temperatures) !== JSON.stringify(sensors)) {
+                   sensors = data.temperatures;
+                   updateThresholdControls();
+               }
+
+               // Update cycle duration
                if (data.cycle_duration_minutes !== currentDuration) {
                    currentDuration = data.cycle_duration_minutes;
                    document.getElementById('cycleDuration').value = currentDuration;
                }
-               document.getElementById('tempThreshold').value = data.threshold;
            } catch (error) {
                console.error('Error updating status:', error);
+           }
+       }
+
+       function updateThresholdControls() {
+           const container = document.getElementById('thresholdControls');
+           container.innerHTML = '';
+           
+           for (const [sensorId, sensorData] of Object.entries(sensors)) {
+               const row = document.createElement('div');
+               row.className = 'setting-row';
+               row.innerHTML = `
+                   <div class="setting-label">${sensorData.name} Threshold</div>
+                   <div class="setting-input">
+                       <input type="number" id="threshold_${sensorId}" value="${sensorData.threshold}" min="50" max="90" step="0.5">
+                       <label style="margin-right: 10px;">°F</label>
+                       <button onclick="updateTempThreshold('${sensorId}')" class="button">Save</button>
+                   </div>
+               `;
+               container.appendChild(row);
            }
        }
 
@@ -145,7 +211,7 @@
                });
                
                if (response.ok) {
-                   updateStatus();  // Refresh display
+                   updateStatus();
                }
            } catch (error) {
                console.error('Error with manual control:', error);
@@ -169,7 +235,7 @@
                
                if (response.ok) {
                    currentDuration = duration;
-                   updateStatus();  // Refresh display
+                   updateStatus();
                }
            } catch (error) {
                console.error('Error updating cycle duration:', error);
@@ -177,8 +243,9 @@
            }
        }
 
-       async function updateTempThreshold() {
-           const threshold = parseFloat(document.getElementById('tempThreshold').value);
+       async function updateTempThreshold(sensorId) {
+           const input = document.getElementById(`threshold_${sensorId}`);
+           const threshold = parseFloat(input.value);
            if (isNaN(threshold) || threshold < 50 || threshold > 90) {
                alert('Please enter a temperature between 50°F and 90°F');
                return;
@@ -188,11 +255,15 @@
                const response = await fetch('/config', {
                    method: 'POST',
                    headers: {'Content-Type': 'application/json'},
-                   body: JSON.stringify({temp_threshold_f: threshold})
+                   body: JSON.stringify({
+                       thresholds: {
+                           [sensorId]: threshold
+                       }
+                   })
                });
                
                if (response.ok) {
-                   updateStatus();  // Refresh display
+                   updateStatus();
                }
            } catch (error) {
                console.error('Error updating temperature threshold:', error);
@@ -205,7 +276,7 @@
 
        // Update status every 10 seconds
        setInterval(updateStatus, 10000);
-       updateStatus();  // Initial update
+       updateStatus();
    </script>
 </body>
 </html>

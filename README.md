@@ -1,6 +1,6 @@
 # Boiler Control
 
-A Raspberry Pi-based system for controlling a boiler based on temperature sensor readings via MQTT. Features automated temperature-based control, manual override, and a mobile-friendly web interface.
+A Raspberry Pi-based system for controlling a boiler based on temperature sensor readings from a Nanit baby monitor via MQTT. Features automated temperature-based control, manual override, and a mobile-friendly web interface.
 
 ## Features
 - Multi-sensor temperature monitoring
